@@ -2,6 +2,9 @@
 
 PyTorch reimplementation of ["A simple, efficient and scalable contrastive masked autoencoder for learning visual representations"](https://arxiv.org/abs/2210.16870).
 
+## My modifications 
+- Moved contrastive transforms from data module to model module (inside common step) to be runned on GPU (much faster on CPU limited devices). Tested on RTX 3080ti, Intel® Core™ i7-12800H, 64GB RAM system.
+
 
 <p align="center">
 <img src="assets/can.png" width="80%" style={text-align: center;}/>
