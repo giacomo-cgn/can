@@ -10,29 +10,20 @@ from torch.utils.data import DataLoader
 from torchvision.transforms import (ColorJitter, Compose, GaussianBlur,
                                     Normalize, RandomApply, RandomGrayscale,
                                     RandomHorizontalFlip, RandomResizedCrop,
+                                    RandomVerticalFlip, Resize, RandomRotation,
                                     ToTensor)
 
+from torchvision.io import read_image
 
-class DuelViewDataModule(pl.LightningDataModule):
+
+class CANDataModule(pl.LightningDataModule):
     def __init__(
         self,
         root: str,
         batch_size: int = 256,
-        workers: int = 4,
+        workers: int = 20,
         num_val_samples: int = 1000,
         crop_size: int = 224,
-        min_scale: float = 0.08,
-        max_scale: float = 1.0,
-        brightness: float = 0.8,
-        contrast: float = 0.8,
-        saturation: float = 0.8,
-        hue: float = 0.2,
-        color_jitter_prob: float = 0.8,
-        gray_scale_prob: float = 0.2,
-        flip_prob: float = 0.5,
-        gaussian_prob: float = 0.5,
-        mean: Tuple[float, float, float] = (0.485, 0.456, 0.406),
-        std: Tuple[float, float, float] = (0.228, 0.224, 0.225),
     ):
         """Duel view data module
 
@@ -62,41 +53,12 @@ class DuelViewDataModule(pl.LightningDataModule):
         self.workers = workers
         self.num_val_samples = num_val_samples
         self.crop_size = crop_size
-        self.min_scale = min_scale
-        self.max_scale = max_scale
-        self.brightness = brightness
-        self.contrast = contrast
-        self.saturation = saturation
-        self.hue = hue
-        self.color_jitter_prob = color_jitter_prob
-        self.gray_scale_prob = gray_scale_prob
-        self.flip_prob = flip_prob
-        self.gaussian_prob = gaussian_prob
-        self.mean = mean
-        self.std = std
 
-        self.transforms = MultiViewTransform(
-            Transforms(
-                crop_size=self.crop_size,
-                min_scale=self.min_scale,
-                max_scale=self.max_scale,
-                brightness=self.brightness,
-                contrast=self.contrast,
-                saturation=self.saturation,
-                hue=self.hue,
-                color_jitter_prob=self.color_jitter_prob,
-                gray_scale_prob=self.gray_scale_prob,
-                gaussian_prob=self.gaussian_prob,
-                flip_prob=self.flip_prob,
-                mean=self.mean,
-                std=self.std,
-            ),
-            n_views=2,
-        )
+        self.init_transforms = InitialTransforms(size=self.crop_size)
 
     def setup(self, stage: str = "fit"):
         if stage == "fit":
-            dataset = SimpleDataset(self.root, self.transforms)
+            dataset = SimpleDataset(self.root, self.init_transforms)
 
             # Randomly take num_val_samples images for a validation set
             self.train_dataset, self.val_dataset = data.random_split(
@@ -114,6 +76,7 @@ class DuelViewDataModule(pl.LightningDataModule):
             pin_memory=True,
             drop_last=True,
             persistent_workers=True,
+            #prefetch_factor=8
         )
 
     def val_dataloader(self):
@@ -129,7 +92,7 @@ class DuelViewDataModule(pl.LightningDataModule):
 
 
 class SimpleDataset(data.Dataset):
-    def __init__(self, root: str, transforms: Callable):
+    def __init__(self, root: str, init_transforms: Callable):
         """Image dataset from nested directory
 
         Args:
@@ -138,35 +101,42 @@ class SimpleDataset(data.Dataset):
         """
         super().__init__()
         self.root = root
+        # print number of children of directory
+        print(f"Number of children: {len(os.listdir(root))}")
         self.paths = [
             f for f in glob(f"{root}/**/*", recursive=True) if os.path.isfile(f)
         ]
-        self.transforms = transforms
+        self.init_transforms = init_transforms
 
         print(f"Loaded {len(self.paths)} images from {root}")
 
     def __getitem__(self, index: int):
-        img = Image.open(self.paths[index]).convert("RGB")
-        img = self.transforms(img)
+
+        img = read_image(self.paths[index]).type(torch.float32)
+        img = self.init_transforms(img)
         return img
 
     def __len__(self):
         return len(self.paths)
 
 
-class MultiViewTransform:
-    def __init__(self, transforms: Callable, n_views: int = 2):
-        """Wrapper class to apply transforms multiple times on an image
+class InitialTransforms:
+    def __init__(
+        self,
+        size: int = 224,
+    ):
+        """Initial transform for image homogeneity (to be executed on CPU)
 
         Args:
-            transforms: Image augmentation pipeline
-            n_views: Number of augmented views to return
+            size: Size of image resize
         """
-        self.transforms = transforms
-        self.n_views = n_views
+        self.transforms = Compose([
+            Resize((size, size)),
+        ])
 
-    def __call__(self, img: Image.Image):
-        return [self.transforms(img) for _ in range(self.n_views)]
+    def __call__(self, img: torch.Tensor):
+        return self.transforms(img)
+
 
 
 class Transforms:
@@ -186,7 +156,7 @@ class Transforms:
         mean: Tuple[float, float, float] = (0.485, 0.456, 0.406),
         std: Tuple[float, float, float] = (0.228, 0.224, 0.225),
     ):
-        """Augmentation pipeline for contrastive learning
+        """Augmentation pipeline for contrastive learning (to be executed on accelerator)
 
         Args:
             crop_size: Size of image crop
@@ -222,10 +192,12 @@ class Transforms:
                 RandomGrayscale(p=gray_scale_prob),
                 RandomApply([GaussianBlur(kernel_size=23)], p=gaussian_prob),
                 RandomHorizontalFlip(p=flip_prob),
-                ToTensor(),
-                Normalize(mean=mean, std=std),
+                RandomVerticalFlip(p=flip_prob),
+                #RandomRotation(180, expand=False),
+
+                #Normalize(mean=mean, std=std),
             ]
         )
 
-    def __call__(self, img: Image.Image):
+    def __call__(self, img: torch.Tensor):
         return self.transforms(img)

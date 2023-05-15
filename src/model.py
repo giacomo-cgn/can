@@ -16,6 +16,9 @@ from src.network.decoder import VitDecoder
 from src.network.encoder import build_encoder
 from src.network.pos_embed import get_1d_sincos_pos_embed
 
+from .data import Transforms
+
+
 
 class CANModel(pl.LightningModule):
     def __init__(
@@ -45,6 +48,21 @@ class CANModel(pl.LightningModule):
         scheduler: str = "cosine",
         warmup_epochs: int = 0,
         channel_last: bool = False,
+        
+        # Trasformation arguments
+        min_scale: float = 0.08,
+        max_scale: float = 1.0,
+        brightness: float = 0.8,
+        contrast: float = 0.8,
+        saturation: float = 0.8,
+        hue: float = 0.2,
+        color_jitter_prob: float = 0.8,
+        gray_scale_prob: float = 0.2,
+        flip_prob: float = 0.5,
+        gaussian_prob: float = 0.5,
+        mean: Tuple[float, float, float] = (0.485, 0.456, 0.406),
+        std: Tuple[float, float, float] = (0.228, 0.224, 0.225),
+
     ):
         """Contrastive Masked Autoencoder and Noise Prediction Pretraining Model
 
@@ -103,6 +121,37 @@ class CANModel(pl.LightningModule):
         self.scheduler = scheduler
         self.warmup_epochs = warmup_epochs
         self.channel_last = channel_last
+        
+
+        # Transformations arguments
+        self.min_scale = min_scale
+        self.max_scale = max_scale
+        self.brightness = brightness
+        self.contrast = contrast
+        self.saturation = saturation
+        self.hue = hue
+        self.color_jitter_prob = color_jitter_prob
+        self.gray_scale_prob = gray_scale_prob
+        self.flip_prob = flip_prob
+        self.gaussian_prob = gaussian_prob
+        self.mean = mean
+        self.std = std
+
+        self.transforms = Transforms(
+                crop_size=self.img_size,
+                min_scale=self.min_scale,
+                max_scale=self.max_scale,
+                brightness=self.brightness,
+                contrast=self.contrast,
+                saturation=self.saturation,
+                hue=self.hue,
+                color_jitter_prob=self.color_jitter_prob,
+                gray_scale_prob=self.gray_scale_prob,
+                gaussian_prob=self.gaussian_prob,
+                flip_prob=self.flip_prob,
+                mean=self.mean,
+                std=self.std,
+            )
 
         # Initialize networks
         self.encoder, self.patch_size = build_encoder(
@@ -233,15 +282,17 @@ class CANModel(pl.LightningModule):
 
     def shared_step(
         self,
-        x: Tuple[torch.Tensor, torch.Tensor],
+        x:  torch.Tensor,
         mode: str = "train",
         batch_idx: Optional[int] = None,
-    ):
-        x1, x2 = x
-
+    ):        
         if self.channel_last:
-            x1 = x1.to(memory_format=torch.channels_last)  # type:ignore
-            x2 = x2.to(memory_format=torch.channels_last)  # type:ignore
+            x = x.to(memory_format=torch.channels_last)  # type:ignore
+
+        # MODIFED HERE TO ADD TRANSFORMS IN GPU
+        x1 = self.transforms(x)
+        x2 = self.transforms(x)
+
 
         # Add noise to views
         x1_noise, noise1, std1 = self.add_noise(x1)

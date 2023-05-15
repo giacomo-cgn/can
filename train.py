@@ -1,12 +1,12 @@
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 
-from src.data import DuelViewDataModule
+from src.data import CANDataModule
 from src.model import CANModel
 from src.pl_utils import MyLightningArgumentParser, init_logger
 
 model_class = CANModel
-dm_class = DuelViewDataModule
+dm_class = CANDataModule
 
 # Parse arguments
 parser = MyLightningArgumentParser()
